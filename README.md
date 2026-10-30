@@ -1,6 +1,6 @@
 # Lazybird for Google Docs, Sheets and Slides
 
-Read your documents, slides and spreadsheets aloud with natural AI voices, and save them as MP3 files. 500+ voices in 150+ languages and accents, plus the voices you clone or design in [Lazybird](https://lazybird.app).
+Read your documents, slides and spreadsheets aloud with natural AI voices, and save them as MP3 files. 500+ voices in 150+ languages and accents, plus the voices you clone in [Lazybird](https://lazybird.app).
 
 ## Features
 
@@ -10,7 +10,7 @@ Read your documents, slides and spreadsheets aloud with natural AI voices, and s
 - **Starts in seconds.** Playback starts as soon as the first lines are ready, even for long documents, and keeps going while the rest is generated.
 - **Player controls.** Pause, resume, stop and replay. The sidebar shows which slide is playing.
 - **Save as MP3.** Save the whole reading as one MP3 file, named after your file.
-- **500+ voices.** Search by name, style or accent, filter by language and gender, and preview a voice before you pick it. Voices you cloned or designed in Lazybird show up under **My voices**.
+- **500+ voices.** Search by name, style or accent, filter by language and gender, and preview a voice before you pick it. Voices you cloned in Lazybird show up under **My voices**.
 - **Speed** from 0.5× to 2×.
 - **Remembers your choices.** Your voice, speed and what to read are saved in your Google account.
 
