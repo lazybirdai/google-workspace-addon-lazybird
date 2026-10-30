@@ -1,0 +1,1005 @@
+<script>
+  (function () {
+    'use strict';
+
+    var API = 'https://api.lazybird.app/v2';
+    var UTM = 'utm_source=google-workspace&utm_medium=addon';
+    var DEFAULT_VOICE = { id: 'tgJ2Hes6DauwTg8kFrRPLN', displayName: 'Elyssia', language: 'en-US', description: 'YouTube Host' };
+    /** A short first chunk starts playback sooner; later chunks grow up to the max. */
+    var FIRST_CHUNK_CHARS = 200;
+    var MAX_CHUNK_CHARS = 1000;
+    /** Chunks generated ahead of the one playing. */
+    var LOOKAHEAD = 2;
+    var VOICE_PAGE = 30;
+
+    var SCOPES = {
+      docs: [
+        ['selection', 'Selection'],
+        ['cursor', 'From cursor'],
+        ['document', 'Document'],
+      ],
+      slides: [
+        ['slide', 'This slide'],
+        ['from-slide', 'From here'],
+        ['presentation', 'All slides'],
+      ],
+      sheets: [
+        ['selection', 'Selected cells'],
+        ['sheet', 'Whole sheet'],
+      ],
+    };
+    var SOURCES = [
+      ['text', 'Slide text'],
+      ['notes', 'Speaker notes'],
+      ['both', 'Both'],
+    ];
+    var LANGUAGES = ['af', 'am', 'ar', 'az', 'bg', 'bn', 'bs', 'ca', 'cs', 'cy', 'da', 'de', 'el', 'en', 'es', 'et', 'eu', 'fa', 'fi', 'fil', 'fr', 'ga', 'gl', 'gu', 'he', 'hi', 'hr', 'hu', 'hy', 'id', 'is', 'it', 'ja', 'jv', 'ka', 'kk', 'km', 'kn', 'ko', 'lo', 'lt', 'lv', 'mk', 'ml', 'mn', 'mr', 'ms', 'mt', 'my', 'nb', 'ne', 'nl', 'pa', 'pl', 'ps', 'pt', 'ro', 'ru', 'si', 'sk', 'sl', 'so', 'sq', 'sr', 'su', 'sv', 'sw', 'ta', 'te', 'th', 'tr', 'uk', 'ur', 'uz', 'vi', 'yue', 'zh', 'zu'];
+
+    var $ = function (id) {
+      return document.getElementById(id);
+    };
+    var languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
+    var state = { apiKey: '', settings: {} };
+
+    // -----------------------------------------------------------------------
+    // Server and API calls
+
+    function server(name) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      return new Promise(function (resolve, reject) {
+        var runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+        runner[name].apply(runner, args);
+      });
+    }
+
+    class LazybirdError extends Error {
+      constructor(status, message) {
+        super(message);
+        this.status = status;
+      }
+    }
+
+    async function api(path, options) {
+      options = options || {};
+      var headers = {};
+      if (!options.signIn) headers['X-API-Key'] = options.apiKey || state.apiKey;
+      if (options.body) headers['Content-Type'] = 'application/json';
+      var response;
+      try {
+        response = await fetch(API + path, {
+          method: options.method || 'GET',
+          headers: headers,
+          body: options.body ? JSON.stringify(options.body) : undefined,
+          signal: options.signal,
+        });
+      } catch (err) {
+        if (err.name === 'AbortError') throw err;
+        throw new LazybirdError(0, "Couldn't reach Lazybird. Check your connection and try again.");
+      }
+      if (response.ok) return response;
+      var message = '';
+      try {
+        var error = (await response.json()).error;
+        message = typeof error === 'string' ? error : (error && error.message) || '';
+      } catch (err) {}
+      // Sign-in errors are already written for people, such as an expired code.
+      if (options.signIn && message && response.status < 500) throw new LazybirdError(response.status, message);
+      throw new LazybirdError(response.status, friendlyError(response.status, message));
+    }
+
+    function friendlyError(status, message) {
+      if (status === 401) return "Lazybird doesn't accept this key. Disconnect in Settings and sign in again.";
+      if (status === 429) return 'Too many requests at once. Wait a moment and try again.';
+      if (status >= 500) return 'Lazybird had a problem generating the audio. Try again in a moment.';
+      return message || 'Lazybird returned an error (' + status + ').';
+    }
+
+    function showError(el, err) {
+      el.textContent = '';
+      if (!err) {
+        el.hidden = true;
+        return;
+      }
+      var message = err instanceof LazybirdError ? err.message : (err && err.message) || String(err);
+      el.appendChild(document.createTextNode(message));
+      if (err instanceof LazybirdError && err.status === 422) {
+        el.appendChild(document.createTextNode(' '));
+        el.appendChild(link('See plans', 'https://lazybird.app/pricing'));
+      }
+      el.hidden = false;
+    }
+
+    function link(text, href) {
+      var a = document.createElement('a');
+      a.href = href + (href.indexOf('?') < 0 ? '?' : '&') + UTM;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = text;
+      return a;
+    }
+
+    // -----------------------------------------------------------------------
+    // Views
+
+    function show(id) {
+      ['loading', 'connect', 'main', 'voices', 'settings'].forEach(function (view) {
+        var el = $(view);
+        if (el) el.hidden = view !== id;
+      });
+    }
+
+    async function init() {
+      try {
+        var loaded = await server('getState');
+        state.apiKey = loaded.apiKey;
+        state.settings = loaded.settings || {};
+      } catch (err) {
+        state.settings = {};
+      }
+      renderMain();
+      if (state.apiKey) show('main');
+      else show('connect');
+    }
+
+    // Connect: an emailed code, or an API key from Studio settings
+
+    var codeEmail = '';
+
+    function showConnect(form) {
+      ['email-form', 'code-form', 'key-form'].forEach(function (id) {
+        $(id).hidden = id !== form;
+      });
+      $('use-key').hidden = form === 'key-form';
+      showError($('connect-error'), null);
+      var input = { 'email-form': 'email', 'code-form': 'code', 'key-form': 'api-key' }[form];
+      $(input).focus();
+    }
+
+    /** Runs a sign-in step with its button disabled and any error shown under the form. */
+    async function connectStep(button, busyText, run) {
+      var text = button.textContent;
+      showError($('connect-error'), null);
+      button.disabled = true;
+      button.textContent = busyText;
+      try {
+        await run();
+      } catch (err) {
+        showError($('connect-error'), err);
+      } finally {
+        button.disabled = false;
+        button.textContent = text;
+      }
+    }
+
+    async function connected(key) {
+      await server('saveApiKey', key);
+      state.apiKey = key;
+      $('email').value = '';
+      $('code').value = '';
+      $('api-key').value = '';
+      showConnect('email-form');
+      renderVoiceCard();
+      show('main');
+    }
+
+    $('email-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var email = $('email').value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        showError($('connect-error'), new Error('Enter your email address.'));
+        return;
+      }
+      connectStep($('email-button'), 'Sending…', async function () {
+        await api('/auth/request-code', { method: 'POST', body: { email: email }, signIn: true });
+        codeEmail = email;
+        $('code-sent').textContent = 'We sent it to ' + email + '. It may take a minute to arrive.';
+        showConnect('code-form');
+      });
+    });
+
+    $('code-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var code = $('code').value.replace(/\s/g, '');
+      if (!/^\d{6}$/.test(code)) {
+        showError($('connect-error'), new Error('Enter the 6-digit code from the email.'));
+        return;
+      }
+      connectStep($('code-button'), 'Signing in…', async function () {
+        var result = await (
+          await api('/auth/verify-code', {
+            method: 'POST',
+            body: { email: codeEmail, code: code, keyName: 'Google Workspace' },
+            signIn: true,
+          })
+        ).json();
+        await connected(result.apiKey);
+      });
+    });
+
+    $('key-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var key = $('api-key').value.trim();
+      if (!key) {
+        showError($('connect-error'), new Error('Paste your API key first.'));
+        return;
+      }
+      connectStep($('key-button'), 'Checking…', async function () {
+        try {
+          await api('/me', { apiKey: key });
+        } catch (err) {
+          if (err.status === 401) throw new Error("Lazybird doesn't recognize this API key. Copy it again from Studio settings.");
+          throw err;
+        }
+        await connected(key);
+      });
+    });
+
+    $('code-back').addEventListener('click', function () {
+      showConnect('email-form');
+    });
+    $('key-back').addEventListener('click', function () {
+      showConnect('email-form');
+    });
+    $('use-key').addEventListener('click', function () {
+      showConnect('key-form');
+    });
+
+    // Settings
+
+    $('open-settings').addEventListener('click', async function () {
+      show('settings');
+      $('account').textContent = 'Checking…';
+      try {
+        var me = await (await api('/me')).json();
+        var plan = me.plan && me.plan.name ? me.plan.name + ' plan' : '';
+        $('account').textContent = [me.email, plan].filter(Boolean).join(' · ') || 'Connected';
+      } catch (err) {
+        $('account').textContent = err.message;
+      }
+    });
+    $('settings-back').addEventListener('click', function () {
+      show('main');
+    });
+    $('disconnect').addEventListener('click', async function () {
+      reader.stop();
+      await server('saveApiKey', '');
+      state.apiKey = '';
+      showConnect('email-form');
+      show('connect');
+    });
+
+    // -----------------------------------------------------------------------
+    // Main view
+
+    var saveTimer = 0;
+    function saveSettings() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () {
+        server('saveSettings', state.settings).catch(function () {});
+      }, 400);
+    }
+
+    function currentVoice() {
+      return state.settings.voice || DEFAULT_VOICE;
+    }
+
+    function currentSpeed() {
+      var speed = Number(state.settings.speed);
+      return speed >= 0.5 && speed <= 2 ? speed : 1;
+    }
+
+    function currentScope() {
+      var scopes = SCOPES[HOST] || [];
+      var saved = (state.settings.scope || {})[HOST];
+      return scopes.some(function (s) {
+        return s[0] === saved;
+      })
+        ? saved
+        : scopes[0] && scopes[0][0];
+    }
+
+    function renderMain() {
+      renderVoiceCard();
+      $('speed').value = currentSpeed();
+      $('speed-value').textContent = formatSpeed(currentSpeed());
+      renderSegmented($('scope'), SCOPES[HOST] || [], currentScope(), function (value) {
+        state.settings.scope = Object.assign({}, state.settings.scope, { [HOST]: value });
+        saveSettings();
+      });
+      $('source-field').hidden = HOST !== 'slides';
+      if (HOST === 'slides') {
+        renderSegmented($('source'), SOURCES, state.settings.source || 'text', function (value) {
+          state.settings.source = value;
+          saveSettings();
+        });
+      }
+    }
+
+    function renderVoiceCard() {
+      var voice = currentVoice();
+      var card = $('voice-current');
+      setAvatar(card.querySelector('.avatar'), voice.avatar);
+      card.querySelector('.voice-name').textContent = voice.displayName;
+      card.querySelector('.voice-meta').textContent = voiceMeta(voice);
+      if (!voice.avatar && state.apiKey) {
+        api('/voices/' + encodeURIComponent(voice.id))
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (data) {
+            if (data.voice && currentVoice().id === data.voice.id) {
+              state.settings.voice = pickVoice(data.voice);
+              renderVoiceCard();
+            }
+          })
+          .catch(function () {});
+      }
+    }
+
+    function renderSegmented(container, options, selected, onChange) {
+      container.textContent = '';
+      options.forEach(function (option) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('role', 'radio');
+        button.setAttribute('aria-checked', String(option[0] === selected));
+        button.textContent = option[1];
+        button.addEventListener('click', function () {
+          Array.prototype.forEach.call(container.children, function (b) {
+            b.setAttribute('aria-checked', String(b === button));
+          });
+          onChange(option[0]);
+        });
+        container.appendChild(button);
+      });
+    }
+
+    function formatSpeed(speed) {
+      return (Math.round(speed * 100) / 100).toString() + '×';
+    }
+
+    $('speed').addEventListener('input', function () {
+      var speed = Number($('speed').value);
+      $('speed-value').textContent = formatSpeed(speed);
+      state.settings.speed = speed;
+      saveSettings();
+    });
+
+    $('read').addEventListener('click', async function () {
+      var button = $('read');
+      showError($('main-error'), null);
+      button.disabled = true;
+      try {
+        var result = await server('getText', { scope: currentScope(), source: state.settings.source || 'text' });
+        if (!result.parts.length) throw new Error('There is no text to read here.');
+        reader.start(result, currentVoice().id, currentSpeed());
+      } catch (err) {
+        showError($('main-error'), err);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // Voice picker
+
+    var voiceQuery = 0;
+    var searchTimer = 0;
+    var preview = new Audio();
+    var previewButton = null;
+
+    $('voice-current').addEventListener('click', function () {
+      show('voices');
+      if (!$('voice-language').options.length) fillLanguages();
+      loadVoices();
+      $('voice-search').focus();
+    });
+    $('voices-back').addEventListener('click', closeVoices);
+    $('voice-search').addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(loadVoices, 300);
+    });
+    $('voice-language').addEventListener('change', loadVoices);
+    $('voice-gender').addEventListener('change', loadVoices);
+    preview.addEventListener('ended', stopPreview);
+
+    function closeVoices() {
+      stopPreview();
+      show('main');
+    }
+
+    function fillLanguages() {
+      var select = $('voice-language');
+      var options = LANGUAGES.map(function (code) {
+        return [code, languageName(code)];
+      }).sort(function (a, b) {
+        return a[1].localeCompare(b[1]);
+      });
+      [['', 'All languages']].concat(options).forEach(function (o) {
+        var option = document.createElement('option');
+        option.value = o[0];
+        option.textContent = o[1];
+        select.appendChild(option);
+      });
+    }
+
+    function voiceParams(section, cursor) {
+      var params = new URLSearchParams({ section: section, limit: String(VOICE_PAGE) });
+      var q = $('voice-search').value.trim();
+      if (q) params.set('q', q);
+      if ($('voice-language').value) params.set('language', $('voice-language').value);
+      if ($('voice-gender').value) params.set('gender', $('voice-gender').value);
+      if (cursor) params.set('cursor', cursor);
+      return params.toString();
+    }
+
+    async function loadVoices() {
+      var query = ++voiceQuery;
+      var list = $('voice-list');
+      list.textContent = '';
+      list.appendChild(textEl('p', 'empty', 'Loading voices…'));
+      try {
+        var pages = await Promise.all(
+          ['myVoices', 'library'].map(function (section) {
+            return api('/voices?' + voiceParams(section)).then(function (r) {
+              return r.json();
+            });
+          })
+        );
+        if (query !== voiceQuery) return;
+        list.textContent = '';
+        renderSection(list, 'My voices', 'myVoices', pages[0]);
+        renderSection(list, 'Lazybird library', 'library', pages[1]);
+        if (!list.children.length) list.appendChild(textEl('p', 'empty', 'No voices match. Try other words or another language.'));
+      } catch (err) {
+        if (query !== voiceQuery) return;
+        list.textContent = '';
+        list.appendChild(textEl('p', 'error', err.message));
+      }
+    }
+
+    function renderSection(list, title, section, page) {
+      var voices = page[section] || [];
+      if (!voices.length) return;
+      var group = document.createElement('div');
+      group.appendChild(textEl('span', 'eyebrow', title));
+      voices.forEach(function (voice) {
+        group.appendChild(voiceRow(voice));
+      });
+      list.appendChild(group);
+      addMore(group, section, page.nextCursor);
+    }
+
+    function addMore(group, section, cursor) {
+      if (!cursor) return;
+      var query = voiceQuery;
+      var more = textEl('button', 'button more', 'Show more');
+      more.type = 'button';
+      more.addEventListener('click', async function () {
+        more.disabled = true;
+        try {
+          var page = await (await api('/voices?' + voiceParams(section, cursor))).json();
+          if (query !== voiceQuery) return;
+          more.remove();
+          (page[section] || []).forEach(function (voice) {
+            group.appendChild(voiceRow(voice));
+          });
+          addMore(group, section, page.nextCursor);
+        } catch (err) {
+          more.disabled = false;
+          more.textContent = err.message;
+        }
+      });
+      group.appendChild(more);
+    }
+
+    function voiceRow(voice) {
+      var row = document.createElement('div');
+      row.className = 'voice-row' + (voice.id === currentVoice().id ? ' current' : '');
+      row.setAttribute('role', 'button');
+      row.tabIndex = 0;
+      var img = document.createElement('img');
+      img.className = 'avatar';
+      img.alt = '';
+      setAvatar(img, voice.avatar);
+      var text = textEl('span', 'voice-text', '');
+      text.appendChild(textEl('span', 'voice-name', voice.displayName));
+      text.appendChild(textEl('span', 'voice-meta', voiceMeta(voice)));
+      row.appendChild(img);
+      row.appendChild(text);
+      if (voice.previewUrl) {
+        var play = document.createElement('button');
+        play.type = 'button';
+        play.className = 'icon-button';
+        play.title = 'Preview';
+        play.setAttribute('aria-label', 'Preview ' + voice.displayName);
+        play.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play" /></svg>';
+        play.addEventListener('click', function (e) {
+          e.stopPropagation();
+          togglePreview(play, voice.previewUrl);
+        });
+        row.appendChild(play);
+      }
+      var choose = function () {
+        state.settings.voice = pickVoice(voice);
+        saveSettings();
+        renderVoiceCard();
+        closeVoices();
+      };
+      row.addEventListener('click', choose);
+      row.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          choose();
+        }
+      });
+      return row;
+    }
+
+    function togglePreview(button, url) {
+      var same = previewButton === button;
+      stopPreview();
+      if (same) return;
+      previewButton = button;
+      button.querySelector('use').setAttribute('href', '#i-stop');
+      preview.src = url;
+      preview.play().catch(stopPreview);
+    }
+
+    function stopPreview() {
+      preview.pause();
+      if (previewButton) previewButton.querySelector('use').setAttribute('href', '#i-play');
+      previewButton = null;
+    }
+
+    function pickVoice(voice) {
+      return {
+        id: voice.id,
+        displayName: voice.displayName,
+        language: voice.language || voice.detectedLocale || voice.detectedLanguage || '',
+        description: voice.description || '',
+        avatar: voice.avatar || '',
+      };
+    }
+
+    function voiceMeta(voice) {
+      var code = voice.language || voice.detectedLocale || voice.detectedLanguage;
+      var language = code ? languageName(code) : '';
+      var description = voice.description || '';
+      // Many descriptions already name the accent, e.g. "Mexican Spanish Male".
+      if (language && description.toLowerCase().indexOf(language.toLowerCase()) >= 0) language = '';
+      return [language, description].filter(Boolean).join(' · ');
+    }
+
+    function languageName(code) {
+      try {
+        return languageNames.of(code) || code;
+      } catch (err) {
+        return code;
+      }
+    }
+
+    function setAvatar(img, src) {
+      if (src) img.src = src;
+      else img.removeAttribute('src');
+    }
+
+    function textEl(tag, className, text) {
+      var el = document.createElement(tag);
+      el.className = className;
+      el.textContent = text;
+      return el;
+    }
+
+    // -----------------------------------------------------------------------
+    // Text chunks
+
+    /**
+     * Splits text into chunks at paragraph, then sentence, then word boundaries.
+     * Every chunk is at most its limit, unless a single word is longer.
+     */
+    function splitIntoChunks(text, maxChars, firstChunkChars) {
+      var limit = Math.min(firstChunkChars || maxChars, maxChars);
+      var pieces = [];
+      var paragraphs = text
+        .split(/\n+/)
+        .map(function (p) {
+          return p.trim();
+        })
+        .filter(Boolean);
+      paragraphs.forEach(function (paragraph, i) {
+        var parts = splitLong(paragraph, maxChars);
+        parts.forEach(function (part, j) {
+          // Mark paragraph ends so chunks join paragraphs with a line break.
+          pieces.push({ part: part, paragraphEnd: j === parts.length - 1 && i < paragraphs.length - 1 });
+        });
+      });
+
+      var chunks = [];
+      var current = '';
+      var currentEndsParagraph = false;
+      while (pieces.length) {
+        var piece = pieces.shift();
+        if (piece.part.length > limit) {
+          // Only the smaller first-chunk limit gets here: split the piece again for it.
+          var parts = splitLong(piece.part, limit);
+          if (parts.length > 1) {
+            pieces.unshift.apply(
+              pieces,
+              parts.map(function (part, j) {
+                return { part: part, paragraphEnd: j === parts.length - 1 && piece.paragraphEnd };
+              })
+            );
+            continue;
+          }
+        }
+        var joiner = current ? (currentEndsParagraph ? '\n' : ' ') : '';
+        if (current && current.length + joiner.length + piece.part.length > limit) {
+          chunks.push(current);
+          limit = Math.min(limit * 2, maxChars);
+          current = piece.part;
+        } else {
+          current += joiner + piece.part;
+        }
+        currentEndsParagraph = piece.paragraphEnd;
+      }
+      if (current) chunks.push(current);
+      return chunks;
+    }
+
+    /** Splits one paragraph into parts no longer than `max`, at sentences, then words. */
+    function splitLong(paragraph, max) {
+      if (paragraph.length <= max) return [paragraph];
+      var sentences = paragraph.match(/[^.!?…。！？।]+(?:[.!?…。！？।]+["'”’)\]]*|$)\s*/g) || [paragraph];
+      var parts = [];
+      var current = '';
+      sentences.forEach(function (raw) {
+        var sentence = raw.trim();
+        if (!sentence) return;
+        if (sentence.length > max) {
+          if (current) parts.push(current);
+          current = '';
+          parts.push.apply(parts, splitWords(sentence, max));
+          return;
+        }
+        if (current && current.length + 1 + sentence.length > max) {
+          parts.push(current);
+          current = sentence;
+        } else {
+          current = current ? current + ' ' + sentence : sentence;
+        }
+      });
+      if (current) parts.push(current);
+      return parts;
+    }
+
+    function splitWords(sentence, max) {
+      var parts = [];
+      var current = '';
+      sentence.split(/\s+/).forEach(function (word) {
+        if (current && current.length + 1 + word.length > max) {
+          parts.push(current);
+          current = word;
+        } else {
+          current = current ? current + ' ' + word : word;
+        }
+      });
+      if (current) parts.push(current);
+      return parts;
+    }
+
+    // -----------------------------------------------------------------------
+    // MP3 join, for saving a reading as one file
+
+    var BITRATES_V1_L3 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+    var BITRATES_V2_L3 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+    var SAMPLE_RATES = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] };
+
+    /** Reads an MPEG audio Layer III frame header at `pos`, or returns null. */
+    function readFrame(data, pos) {
+      if (pos + 4 > data.length) return null;
+      var b1 = data[pos + 1];
+      var b2 = data[pos + 2];
+      var b3 = data[pos + 3];
+      if (data[pos] !== 0xff || (b1 & 0xe0) !== 0xe0) return null;
+      var version = (b1 >> 3) & 0x03;
+      var layer = (b1 >> 1) & 0x03;
+      if (version === 1 || layer !== 1) return null;
+      var bitrate = (version === 3 ? BITRATES_V1_L3 : BITRATES_V2_L3)[(b2 >> 4) & 0x0f];
+      var sampleRate = (SAMPLE_RATES[version] || [])[(b2 >> 2) & 0x03];
+      if (!bitrate || !sampleRate) return null;
+      var length = Math.floor(((version === 3 ? 144 : 72) * bitrate * 1000) / sampleRate) + ((b2 >> 1) & 0x01);
+      var mono = b3 >> 6 === 3;
+      var sideInfo = version === 3 ? (mono ? 17 : 32) : mono ? 9 : 17;
+      var crc = (b1 & 0x01) === 0 ? 2 : 0;
+      return { length: length, xingOffset: 4 + crc + sideInfo };
+    }
+
+    function isXingFrame(data, pos, frame) {
+      var at = pos + frame.xingOffset;
+      var tag = String.fromCharCode(data[at], data[at + 1], data[at + 2], data[at + 3]);
+      return tag === 'Xing' || tag === 'Info';
+    }
+
+    /** Skips an ID3v2 tag at the start of the file. */
+    function audioStart(data) {
+      if (data.length < 10 || data[0] !== 0x49 || data[1] !== 0x44 || data[2] !== 0x33) return 0;
+      var size = ((data[6] & 0x7f) << 21) | ((data[7] & 0x7f) << 14) | ((data[8] & 0x7f) << 7) | (data[9] & 0x7f);
+      return 10 + size + (data[5] & 0x10 ? 10 : 0);
+    }
+
+    function scan(data) {
+      var pos = audioStart(data);
+      // Some encoders pad before the first frame; find the first sync.
+      while (pos < data.length && !readFrame(data, pos)) pos++;
+      var frames = [];
+      var firstFrame = null;
+      for (;;) {
+        var info = readFrame(data, pos);
+        if (!info || pos + info.length > data.length) break;
+        if (!firstFrame) firstFrame = { pos: pos, info: info };
+        if (!(frames.length === 0 && isXingFrame(data, pos, info))) frames.push(pos);
+        pos += info.length;
+      }
+      return { data: data, frames: frames, end: pos, firstFrame: firstFrame };
+    }
+
+    /**
+     * Joins MP3 files into one: each part's tags and Xing/Info frame are
+     * dropped and its audio frames appended. One new Xing frame at the start
+     * gives players the total length, so the duration shows and seeking works.
+     */
+    function concatMp3(files) {
+      if (files.length === 1) return files[0];
+      var parts = files.map(function (file) {
+        return scan(new Uint8Array(file));
+      });
+      var templatePart = parts.find(function (p) {
+        return p.firstFrame;
+      });
+      if (!templatePart) throw new Error('No MP3 audio found');
+      var template = templatePart.firstFrame;
+      var ranges = parts
+        .filter(function (p) {
+          return p.frames.length;
+        })
+        .map(function (p) {
+          return { data: p.data, start: p.frames[0], end: p.end, frames: p.frames };
+        });
+      // The new Xing frame copies the first frame's header at the top bitrate,
+      // which leaves room for the tag and seek table.
+      var header = templatePart.data.slice(template.pos, template.pos + 4);
+      header[1] = header[1] | 0x01; // no CRC
+      header[2] = ((header[2] & 0x0d) | (14 << 4)) & 0xff;
+      var xingInfo = readFrame(header, 0);
+      if (!xingInfo) throw new Error('No MP3 audio found');
+      var audioBytes = ranges.reduce(function (sum, r) {
+        return sum + (r.end - r.start);
+      }, 0);
+      var totalBytes = xingInfo.length + audioBytes;
+      var frameCount = ranges.reduce(function (sum, r) {
+        return sum + r.frames.length;
+      }, 0);
+
+      // Byte offset of every frame in the output, for the seek table.
+      var offsets = [];
+      var base = xingInfo.length;
+      ranges.forEach(function (r) {
+        r.frames.forEach(function (f) {
+          offsets.push(base + (f - r.start));
+        });
+        base += r.end - r.start;
+      });
+
+      var out = new Uint8Array(totalBytes);
+      out.set(header, 0);
+      var view = new DataView(out.buffer);
+      var at = xingInfo.xingOffset;
+      'Xing'.split('').forEach(function (c) {
+        out[at++] = c.charCodeAt(0);
+      });
+      view.setUint32(at, 0x0007, false); // frames, bytes and seek table present
+      view.setUint32(at + 4, frameCount, false);
+      view.setUint32(at + 8, totalBytes, false);
+      for (var i = 0; i < 100; i++) {
+        var offset = offsets[Math.floor((i / 100) * frameCount)] || 0;
+        out[at + 12 + i] = Math.min(255, Math.floor((offset / totalBytes) * 256));
+      }
+      var pos = xingInfo.length;
+      ranges.forEach(function (r) {
+        out.set(r.data.subarray(r.start, r.end), pos);
+        pos += r.end - r.start;
+      });
+      return out.buffer;
+    }
+
+    // -----------------------------------------------------------------------
+    // Reader: plays chunk by chunk and generates the next ones meanwhile
+
+    class Reader {
+      constructor() {
+        this.audio = new Audio();
+        this.state = 'idle';
+        this.run = 0;
+        this.chunks = [];
+        this.clips = [];
+        this.index = 0;
+        this.audio.addEventListener('ended', () => {
+          if (this.state === 'playing') this.playChunk(this.index + 1);
+        });
+        this.audio.addEventListener('timeupdate', () => this.renderProgress());
+        $('pause').addEventListener('click', () => this.togglePause());
+        $('stop').addEventListener('click', () => this.stop());
+        $('download').addEventListener('click', () => this.download());
+      }
+
+      /** Starts reading, replacing anything already playing. */
+      start(result, voiceId, speed) {
+        this.stop();
+        this.title = result.title || 'Lazybird';
+        this.voiceId = voiceId;
+        this.speed = speed;
+        this.controller = new AbortController();
+        this.chunks = [];
+        result.parts.forEach((part, i) => {
+          splitIntoChunks(part.text, MAX_CHUNK_CHARS, i === 0 ? FIRST_CHUNK_CHARS : 0).forEach((text) => {
+            this.chunks.push({ text: text, label: part.label });
+          });
+        });
+        if (!this.chunks.length) {
+          showError($('main-error'), new Error('There is no text to read here.'));
+          return;
+        }
+        this.playChunk(0);
+      }
+
+      togglePause() {
+        if (this.state === 'playing') {
+          this.audio.pause();
+          this.setState('paused');
+        } else if (this.state === 'paused') {
+          this.audio.play();
+          this.setState('playing');
+        } else if (this.state === 'done') {
+          this.playChunk(0);
+        }
+      }
+
+      stop() {
+        this.run++;
+        if (this.controller) this.controller.abort();
+        this.audio.pause();
+        this.audio.removeAttribute('src');
+        this.clips.forEach((clip) => clip.url && URL.revokeObjectURL(clip.url));
+        this.clips = [];
+        this.chunks = [];
+        this.setState('idle');
+      }
+
+      async playChunk(index) {
+        var run = this.run;
+        if (index >= this.chunks.length) {
+          this.setState('done');
+          return;
+        }
+        this.index = index;
+        for (var i = index; i <= index + LOOKAHEAD && i < this.chunks.length; i++) this.fetchClip(i);
+        var clip = this.clips[index];
+        if (!clip.url) this.setState('loading');
+        try {
+          await clip.promise;
+        } catch (err) {
+          if (run !== this.run) return;
+          this.stop();
+          showError($('main-error'), err);
+          return;
+        }
+        if (run !== this.run) return;
+        this.audio.src = clip.url;
+        try {
+          await this.audio.play();
+          this.setState('playing');
+        } catch (err) {
+          if (run !== this.run) return;
+          this.stop();
+          showError($('main-error'), new Error("Couldn't play the audio: " + err.message));
+        }
+      }
+
+      fetchClip(index) {
+        if (this.clips[index]) return this.clips[index].promise;
+        var body = { voiceId: this.voiceId, text: this.chunks[index].text };
+        if (this.speed !== 1) body.settings = { speed: this.speed };
+        var clip = { url: '', buffer: null };
+        clip.promise = api('/generate-speech', { method: 'POST', body: body, signal: this.controller.signal })
+          .then((r) => r.arrayBuffer())
+          .then((buffer) => {
+            clip.buffer = buffer;
+            clip.url = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }));
+          });
+        // Errors surface when the chunk's turn comes; don't report them twice.
+        clip.promise.catch(function () {});
+        this.clips[index] = clip;
+        return clip.promise;
+      }
+
+      /** Generates whatever is left, then saves the whole reading as one MP3. */
+      async download() {
+        var run = this.run;
+        var button = $('download');
+        button.disabled = true;
+        try {
+          for (var i = 0; i < this.chunks.length; i++) {
+            button.querySelector('span').textContent = this.chunks.length > 1 ? i + 1 + '/' + this.chunks.length : '…';
+            // Keep a few requests in flight, like playback does.
+            for (var j = i; j <= i + LOOKAHEAD && j < this.chunks.length; j++) this.fetchClip(j);
+            await this.clips[i].promise;
+            if (run !== this.run) return;
+          }
+          var mp3 = concatMp3(
+            this.clips.map(function (clip) {
+              return clip.buffer;
+            })
+          );
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([mp3], { type: 'audio/mpeg' }));
+          a.download = fileName(this.title);
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(function () {
+            URL.revokeObjectURL(a.href);
+          }, 60000);
+        } catch (err) {
+          if (run === this.run && err.name !== 'AbortError') showError($('main-error'), err);
+        } finally {
+          button.disabled = false;
+          button.querySelector('span').textContent = 'MP3';
+        }
+      }
+
+      setState(state) {
+        this.state = state;
+        this.render();
+      }
+
+      render() {
+        var idle = this.state === 'idle';
+        $('player').hidden = idle;
+        $('read').hidden = !idle && this.state !== 'done';
+        if (idle) return;
+        var chunk = this.chunks[this.index] || {};
+        var labels = { loading: 'Generating…', playing: 'Playing', paused: 'Paused', done: 'Finished' };
+        $('player-label').textContent = labels[this.state] || '';
+        var count = this.chunks.length > 1 ? this.index + 1 + '/' + this.chunks.length : '';
+        $('player-part').textContent = [chunk.label, count].filter(Boolean).join(' · ');
+        var icon = this.state === 'playing' ? '#i-pause' : '#i-play';
+        $('pause').querySelector('use').setAttribute('href', icon);
+        var title = { playing: 'Pause', paused: 'Resume', done: 'Play again', loading: 'Pause' }[this.state];
+        $('pause').title = title;
+        $('pause').setAttribute('aria-label', title);
+        $('pause').disabled = this.state === 'loading';
+        this.renderProgress();
+      }
+
+      renderProgress() {
+        if (!this.chunks.length) return;
+        var within = this.audio.duration ? this.audio.currentTime / this.audio.duration : 0;
+        var done = this.state === 'done' ? 1 : (this.index + within) / this.chunks.length;
+        $('progress-bar').style.width = Math.round(done * 1000) / 10 + '%';
+      }
+    }
+
+    function fileName(title) {
+      var safe = String(title)
+        .replace(/[\\/:*?"<>|]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 80);
+      return (safe || 'Lazybird') + '.mp3';
+    }
+
+    var reader = new Reader();
+    init();
+  })();
+</script>
