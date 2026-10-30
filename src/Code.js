@@ -244,15 +244,19 @@ function sheetsText_(scope) {
   var sheet = SpreadsheetApp.getActiveSheet();
   var range = scope === 'sheet' ? sheet.getDataRange() : sheet.getActiveRange();
   if (!range) throw new Error('Select some cells first.');
-  var rows = range.getDisplayValues().map(function (row) {
-    return row
+  var firstRow = range.getRow();
+  // One part per row: the sidebar shows which row is playing, and rows of
+  // look-alike values stay in separate requests, where the voice can't skip
+  // back to an earlier row.
+  return range.getDisplayValues().map(function (row, i) {
+    var text = row
       .map(function (value) {
         return String(value).trim();
       })
       .filter(Boolean)
       .join(', ');
+    return { label: 'Row ' + (firstRow + i), text: text };
   });
-  return [{ label: '', text: rows.filter(Boolean).join('\n') }];
 }
 
 // ---------------------------------------------------------------------------

@@ -604,7 +604,7 @@
       var paragraphs = text
         .split(/\n+/)
         .map(function (p) {
-          return p.trim();
+          return endSentence(p.trim());
         })
         .filter(Boolean);
       paragraphs.forEach(function (paragraph, i) {
@@ -645,6 +645,17 @@
       }
       if (current) chunks.push(current);
       return chunks;
+    }
+
+    /**
+     * Ends a paragraph with a full stop unless it already ends with punctuation.
+     * Titles, list items, slide lines and sheet rows have none, and without it
+     * the voice runs straight on into the next line.
+     */
+    function endSentence(paragraph) {
+      if (!paragraph || /[.!?…。！？।:;,、，；：]["'”’)\]」』）]*$/.test(paragraph)) return paragraph;
+      // Chinese and Japanese text gets the ideographic full stop.
+      return paragraph + (/[　-ヿ㐀-鿿＀-￯]$/.test(paragraph) ? '。' : '.');
     }
 
     /** Splits one paragraph into parts no longer than `max`, at sentences, then words. */

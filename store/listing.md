@@ -18,7 +18,7 @@ WHAT YOU CAN DO
 • Turn notes, articles and study material into audio you can follow along with or listen to later.
 • Rehearse a talk: hear your slides or your speaker notes read aloud, slide by slide.
 • Make a voiceover for a presentation or a video from your speaker notes, and save it as MP3.
-• Check rows of data by ear while you look at the source, instead of comparing two screens.
+• Hear lists, schedules and notes kept in a spreadsheet, one row at a time.
 • Hear how a text sounds in another language or accent.
 
 GOOGLE DOCS
@@ -36,7 +36,7 @@ GOOGLE SLIDES
 GOOGLE SHEETS
 
 • Read the selected cells or the whole sheet, row by row.
-• Values are read as they are shown in the cells, so you hear dates, currencies and percentages the way they appear.
+• Each row is read on its own, and the sidebar shows which row is playing.
 
 VOICES
 

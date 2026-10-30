@@ -6,9 +6,9 @@ Read your documents, slides and spreadsheets aloud with natural AI voices, and s
 
 - **Google Docs.** Read the selection, everything from the cursor on, or the whole document. Lists and tables are read too.
 - **Google Slides.** Read this slide, every slide from here on, or the whole presentation. Choose the slide text, the speaker notes or both. Text on a slide is read top to bottom, left to right, and skipped slides are left out.
-- **Google Sheets.** Read the selected cells or the whole sheet, row by row, as the values are shown in the cells.
+- **Google Sheets.** Read the selected cells or the whole sheet, row by row.
 - **Starts in seconds.** Playback starts as soon as the first lines are ready, even for long documents, and keeps going while the rest is generated.
-- **Player controls.** Pause, resume, stop and replay. The sidebar shows which slide is playing.
+- **Player controls.** Pause, resume, stop and replay. The sidebar shows which slide or row is playing.
 - **Save as MP3.** Save the whole reading as one MP3 file, named after your file.
 - **500+ voices.** Search by name, style or accent, filter by language and gender, and preview a voice before you pick it. Voices you cloned in Lazybird show up under **My voices**.
 - **Speed** from 0.5× to 2×.
