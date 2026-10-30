@@ -17,7 +17,8 @@ WHAT YOU CAN DO
 • Listen to a draft to catch typos, missing words and awkward sentences that your eyes skip over.
 • Turn notes, articles and study material into audio you can follow along with or listen to later.
 • Rehearse a talk: hear your slides or your speaker notes read aloud, slide by slide.
-• Make a voiceover for a presentation or a video from your speaker notes, and save it as MP3.
+• Narrate a presentation in one click: Add voiceover turns each slide's speaker notes into audio that plays by itself when you present.
+• Make a voiceover for a video from your script, and save it as MP3.
 • Hear lists, schedules and notes kept in a spreadsheet, one row at a time.
 • Hear how a text sounds in another language or accent.
 
@@ -32,6 +33,7 @@ GOOGLE SLIDES
 • Choose the slide text, the speaker notes, or both.
 • Text on a slide is read top to bottom and left to right, and skipped slides are left out.
 • The sidebar shows which slide is playing.
+• Add voiceover: puts the reading of each slide on that slide as a small clip that plays by itself in the slideshow. The clips are saved in a Lazybird voiceovers folder in your Drive.
 
 GOOGLE SHEETS
 
@@ -66,8 +68,8 @@ The free plan includes 10,000 characters a month, with no card needed. Each char
 
 PRIVACY
 
-• Lazybird uses only the "current file" permissions: it can read the document, presentation or spreadsheet you open it in, and nothing else in your Drive.
-• It reads only the part you choose, only when you press Read aloud, and never changes your files.
+• Lazybird reads only the document, presentation or spreadsheet you open it in, only the part you choose, and only when you press Read aloud or Add voiceover. Reading never changes your files.
+• For slide voiceovers, Lazybird can open only the files it created and the presentations you select for it. It can't see your other files.
 • The text you choose is sent to Lazybird's servers to generate the audio. Lazybird does not sell your data and does not use your text to train AI models.
 • The add-on has no ads and no tracking.
 

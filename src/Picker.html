@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <meta charset="utf-8" />
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        color: #18181b;
+        font: 13px/1.5 'DM Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <p id="status">Opening Google Drive…</p>
+    <script>
+      // Google's file picker, limited to the open presentation. Picking it
+      // lets Lazybird edit this deck; the sidebar waits for the result.
+      var reported = false;
+
+      function report(result) {
+        if (reported) return;
+        reported = true;
+        google.script.run
+          .withSuccessHandler(function () {
+            google.script.host.close();
+          })
+          .withFailureHandler(function () {
+            google.script.host.close();
+          })
+          .setPickerResult(result);
+      }
+
+      function fail(err) {
+        document.getElementById('status').textContent = "Couldn't open Google Drive: " + ((err && err.message) || err);
+      }
+
+      // Closing the dialog with its X skips the picker's callback.
+      window.addEventListener('pagehide', function () {
+        report('cancel');
+      });
+
+      function start() {
+        google.script.run
+          .withFailureHandler(fail)
+          .withSuccessHandler(function (config) {
+            gapi.load('picker', function () {
+              try {
+                var view = new google.picker.DocsView(google.picker.ViewId.PRESENTATIONS)
+                  .setFileIds(config.fileId)
+                  .setMode(google.picker.DocsViewMode.LIST);
+                new google.picker.PickerBuilder()
+                  .addView(view)
+                  .enableFeature(google.picker.Feature.NAV_HIDDEN)
+                  .setOAuthToken(config.token)
+                  .setAppId(config.appId)
+                  .setOrigin(google.script.host.origin)
+                  .setSize(620, 400)
+                  .setCallback(function (data) {
+                    if (data.action === google.picker.Action.PICKED) report('picked');
+                    else if (data.action === google.picker.Action.CANCEL) report('cancel');
+                  })
+                  .build()
+                  .setVisible(true);
+              } catch (err) {
+                fail(err);
+              }
+            });
+          })
+          .getPickerConfig();
+      }
+    </script>
+    <script src="https://apis.google.com/js/api.js?onload=start"></script>
+  </body>
+</html>

@@ -87,6 +87,15 @@
       throw new LazybirdError(response.status, friendlyError(response.status, message));
     }
 
+    /** One TTS request; resolves to the MP3 as an ArrayBuffer. */
+    function generateSpeech(text, voiceId, speed, signal) {
+      var body = { voiceId: voiceId, text: text };
+      if (speed !== 1) body.settings = { speed: speed };
+      return api('/generate-speech', { method: 'POST', body: body, signal: signal }).then(function (r) {
+        return r.arrayBuffer();
+      });
+    }
+
     function friendlyError(status, message) {
       if (status === 401) return "Lazybird doesn't accept this key. Disconnect in Settings and sign in again.";
       if (status === 429) return 'Too many requests at once. Wait a moment and try again.';
@@ -101,6 +110,8 @@
         return;
       }
       var message = err instanceof LazybirdError ? err.message : (err && err.message) || String(err);
+      // Server errors arrive as "Error: …" or "Exception: …".
+      message = message.replace(/^(Error|Exception): /, '');
       el.appendChild(document.createTextNode(message));
       if (err instanceof LazybirdError && err.status === 422) {
         el.appendChild(document.createTextNode(' '));
@@ -307,6 +318,7 @@
         saveSettings();
       });
       $('source-field').hidden = HOST !== 'slides';
+      $('voiceover').hidden = HOST !== 'slides';
       if (HOST === 'slides') {
         renderSegmented($('source'), SOURCES, state.settings.source || 'text', function (value) {
           state.settings.source = value;
@@ -379,6 +391,73 @@
         button.disabled = false;
       }
     });
+
+    // -----------------------------------------------------------------------
+    // Slide voiceovers: one clip per slide, placed on the slide by the server
+
+    /** How long to wait for the user to pick the deck in Google's file picker. */
+    var PICKER_WAIT_MS = 5 * 60 * 1000;
+
+    $('voiceover').addEventListener('click', async function () {
+      var button = $('voiceover');
+      showError($('main-error'), null);
+      button.disabled = true;
+      try {
+        var result = await server('getText', { scope: currentScope(), source: state.settings.source || 'text' });
+        if (!result.parts.length) throw new Error('There is no text to turn into a voiceover here.');
+        if (!(await server('hasDeckAccess'))) await requestDeckAccess();
+        var voiceId = currentVoice().id;
+        var speed = currentSpeed();
+        for (var i = 0; i < result.parts.length; i++) {
+          var part = result.parts[i];
+          var prefix = part.label + (result.parts.length > 1 ? ' (' + (i + 1) + '/' + result.parts.length + ')' : '') + ': ';
+          setVoiceoverStatus(prefix + 'generating…');
+          var clips = [];
+          var chunks = splitIntoChunks(part.text, MAX_CHUNK_CHARS);
+          for (var j = 0; j < chunks.length; j++) clips.push(await generateSpeech(chunks[j], voiceId, speed));
+          var clip = await makeVoiceoverClip(concatMp3(clips));
+          setVoiceoverStatus(prefix + 'adding to the slide…');
+          await server('addVoiceover', part.slideId, toBase64(clip));
+        }
+        var count = result.parts.length === 1 ? '1 slide' : result.parts.length + ' slides';
+        setVoiceoverStatus('Voiceover added to ' + count + '. It plays by itself when you present. Give Google Drive a minute to process new clips first.');
+      } catch (err) {
+        setVoiceoverStatus('');
+        showError($('main-error'), err);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    /** Lets the user pick this deck in Google's file picker, which allows Lazybird to edit it. */
+    async function requestDeckAccess() {
+      setVoiceoverStatus('Select this presentation in the window that opened.');
+      await server('showDeckPicker');
+      var deadline = Date.now() + PICKER_WAIT_MS;
+      while (Date.now() < deadline) {
+        await new Promise(function (resolve) {
+          setTimeout(resolve, 1500);
+        });
+        var status = await server('deckAccessStatus');
+        if (status === 'ok') return;
+        if (status === 'cancel') break;
+      }
+      throw new Error('Select this presentation in the window that opens so Lazybird can add the voiceovers.');
+    }
+
+    function setVoiceoverStatus(text) {
+      $('voiceover-status').textContent = text;
+      $('voiceover-status').hidden = !text;
+    }
+
+    function toBase64(buffer) {
+      var bytes = new Uint8Array(buffer);
+      var binary = '';
+      for (var i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      return btoa(binary);
+    }
 
     // -----------------------------------------------------------------------
     // Voice picker
@@ -825,6 +904,262 @@
     }
 
     // -----------------------------------------------------------------------
+    // Voiceover clips: Slides only plays videos on a slide, so each voiceover
+    // becomes a small WebM video of a speaker icon with the reading as sound.
+
+    var CLIP_SIZE = 240;
+    var CLIP_SAMPLE_RATE = 48000;
+    var CLIP_FRAME_MS = 1000;
+    var CLIP_KEYFRAME_MS = 5000;
+    var VIDEO_TRACK = 1;
+    var AUDIO_TRACK = 2;
+    var CLIP_UNSUPPORTED = "This browser can't make voiceover clips. Please use an up-to-date Chrome or Edge.";
+
+    async function makeVoiceoverClip(mp3) {
+      if (typeof VideoEncoder === 'undefined' || typeof AudioEncoder === 'undefined' || typeof OffscreenCanvas === 'undefined') {
+        throw new Error(CLIP_UNSUPPORTED);
+      }
+      var samples = await decodeToMono(mp3);
+      var durationMs = (samples.length / CLIP_SAMPLE_RATE) * 1000;
+      var audio = await encodeAudio(samples);
+      var frames = await encodeVideo(durationMs);
+      return muxWebm(frames, audio, durationMs);
+    }
+
+    async function decodeToMono(mp3) {
+      var context = new OfflineAudioContext(1, 1, CLIP_SAMPLE_RATE);
+      var buffer = await context.decodeAudioData(mp3.slice(0));
+      if (buffer.numberOfChannels === 1) return buffer.getChannelData(0);
+      var mono = new Float32Array(buffer.length);
+      for (var c = 0; c < buffer.numberOfChannels; c++) {
+        var data = buffer.getChannelData(c);
+        for (var i = 0; i < data.length; i++) mono[i] += data[i] / buffer.numberOfChannels;
+      }
+      return mono;
+    }
+
+    async function encodeAudio(samples) {
+      var config = { codec: 'opus', sampleRate: CLIP_SAMPLE_RATE, numberOfChannels: 1, bitrate: 64000 };
+      if (!(await AudioEncoder.isConfigSupported(config)).supported) throw new Error(CLIP_UNSUPPORTED);
+      var packets = [];
+      var head = null;
+      // A failed encode also rejects flush(), which reports the error.
+      var encoder = new AudioEncoder({
+        output: function (chunk, metadata) {
+          var description = metadata && metadata.decoderConfig && metadata.decoderConfig.description;
+          if (description) head = copyBytes(description);
+          packets.push(toBlock(chunk, AUDIO_TRACK));
+        },
+        error: function () {},
+      });
+      encoder.configure(config);
+      var block = CLIP_SAMPLE_RATE / 10;
+      for (var offset = 0; offset < samples.length; offset += block) {
+        var data = samples.subarray(offset, offset + block);
+        var audioData = new AudioData({
+          format: 'f32-planar',
+          sampleRate: CLIP_SAMPLE_RATE,
+          numberOfFrames: data.length,
+          numberOfChannels: 1,
+          timestamp: Math.round((offset / CLIP_SAMPLE_RATE) * 1e6),
+          data: data,
+        });
+        encoder.encode(audioData);
+        audioData.close();
+      }
+      await encoder.flush();
+      encoder.close();
+      return { packets: packets, head: head || opusHead(312) };
+    }
+
+    async function encodeVideo(durationMs) {
+      var config = { codec: 'vp8', width: CLIP_SIZE, height: CLIP_SIZE, bitrate: 50000, framerate: 1000 / CLIP_FRAME_MS };
+      if (!(await VideoEncoder.isConfigSupported(config)).supported) throw new Error(CLIP_UNSUPPORTED);
+      var frames = [];
+      var encoder = new VideoEncoder({
+        output: function (chunk) {
+          frames.push(toBlock(chunk, VIDEO_TRACK));
+        },
+        error: function () {},
+      });
+      encoder.configure(config);
+      var canvas = new OffscreenCanvas(CLIP_SIZE, CLIP_SIZE);
+      drawSpeaker(canvas);
+      for (var t = 0; t < durationMs; t += CLIP_FRAME_MS) {
+        var frame = new VideoFrame(canvas, { timestamp: t * 1000, duration: CLIP_FRAME_MS * 1000 });
+        encoder.encode(frame, { keyFrame: t % CLIP_KEYFRAME_MS === 0 });
+        frame.close();
+      }
+      await encoder.flush();
+      encoder.close();
+      return frames;
+    }
+
+    /** A white speaker on the Studio's dark grey, drawn on a 24-unit grid. */
+    function drawSpeaker(canvas) {
+      var ctx = canvas.getContext('2d');
+      var u = canvas.width / 24;
+      ctx.fillStyle = '#18181b';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.6 * u;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      [[4, 9.5], [7.5, 9.5], [11.5, 6], [11.5, 18], [7.5, 14.5], [4, 14.5]].forEach(function (p, i) {
+        ctx[i ? 'lineTo' : 'moveTo'](p[0] * u, p[1] * u);
+      });
+      ctx.closePath();
+      ctx.fill();
+      [3.5, 7].forEach(function (radius) {
+        ctx.beginPath();
+        ctx.arc(12 * u, 12 * u, radius * u, -Math.PI / 4, Math.PI / 4);
+        ctx.stroke();
+      });
+    }
+
+    function toBlock(chunk, track) {
+      var data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      return { track: track, time: Math.max(0, Math.round(chunk.timestamp / 1000)), key: chunk.type === 'key', data: data };
+    }
+
+    function copyBytes(source) {
+      if (ArrayBuffer.isView(source)) return new Uint8Array(source.buffer, source.byteOffset, source.byteLength).slice();
+      return new Uint8Array(source).slice();
+    }
+
+    /** Opus decoder setup for one channel at 48 kHz, for encoders that don't give one. */
+    function opusHead(preSkip) {
+      var head = new Uint8Array(19);
+      var view = new DataView(head.buffer);
+      head.set(new TextEncoder().encode('OpusHead'), 0);
+      head[8] = 1; // version
+      head[9] = 1; // channels
+      view.setUint16(10, preSkip, true);
+      view.setUint32(12, CLIP_SAMPLE_RATE, true);
+      return head;
+    }
+
+    /**
+     * Writes the WebM file. A cluster starts at every video keyframe, so the
+     * 16-bit block times stay small; the file is small enough to build whole.
+     */
+    function muxWebm(frames, audio, durationMs) {
+      var blocks = frames.concat(audio.packets).sort(function (a, b) {
+        return a.time - b.time || a.track - b.track;
+      });
+      var clusters = [];
+      var cluster = null;
+      blocks.forEach(function (block) {
+        if (!cluster || (block.track === VIDEO_TRACK && block.key) || block.time - cluster.time > 30000) {
+          cluster = { time: block.time, blocks: [] };
+          clusters.push(cluster);
+        }
+        cluster.blocks.push(simpleBlock(block, cluster.time));
+      });
+      var preSkip = audio.head[10] | (audio.head[11] << 8);
+      var header = ebml(0x1a45dfa3, [
+        ebmlUint(0x4286, 1), // EBMLVersion
+        ebmlUint(0x42f7, 1), // EBMLReadVersion
+        ebmlUint(0x42f2, 4), // EBMLMaxIDLength
+        ebmlUint(0x42f3, 8), // EBMLMaxSizeLength
+        ebmlString(0x4282, 'webm'), // DocType
+        ebmlUint(0x4287, 4), // DocTypeVersion
+        ebmlUint(0x4285, 2), // DocTypeReadVersion
+      ]);
+      var info = ebml(0x1549a966, [
+        ebmlUint(0x2ad7b1, 1000000), // TimestampScale: times in ms
+        ebmlString(0x4d80, 'Lazybird'), // MuxingApp
+        ebmlString(0x5741, 'Lazybird'), // WritingApp
+        ebmlFloat(0x4489, durationMs), // Duration
+      ]);
+      var tracks = ebml(0x1654ae6b, [
+        ebml(0xae, [
+          ebmlUint(0xd7, VIDEO_TRACK), // TrackNumber
+          ebmlUint(0x73c5, VIDEO_TRACK), // TrackUID
+          ebmlUint(0x83, 1), // TrackType: video
+          ebmlUint(0x9c, 0), // FlagLacing
+          ebmlString(0x86, 'V_VP8'), // CodecID
+          ebml(0xe0, [ebmlUint(0xb0, CLIP_SIZE), ebmlUint(0xba, CLIP_SIZE)]), // PixelWidth, PixelHeight
+        ]),
+        ebml(0xae, [
+          ebmlUint(0xd7, AUDIO_TRACK),
+          ebmlUint(0x73c5, AUDIO_TRACK),
+          ebmlUint(0x83, 2), // TrackType: audio
+          ebmlUint(0x9c, 0),
+          ebmlString(0x86, 'A_OPUS'),
+          ebml(0x63a2, audio.head), // CodecPrivate
+          ebmlUint(0x56aa, Math.round((preSkip / CLIP_SAMPLE_RATE) * 1e9)), // CodecDelay, ns
+          ebmlUint(0x56bb, 80000000), // SeekPreRoll, ns
+          ebml(0xe1, [ebmlFloat(0xb5, CLIP_SAMPLE_RATE), ebmlUint(0x9f, 1)]), // SamplingFrequency, Channels
+        ]),
+      ]);
+      var segment = [info, tracks].concat(
+        clusters.map(function (c) {
+          return ebml(0x1f43b675, [ebmlUint(0xe7, c.time)].concat(c.blocks));
+        })
+      );
+      return joinBytes([header, ebml(0x18538067, segment)]).buffer;
+    }
+
+    function simpleBlock(block, clusterTime) {
+      var head = new Uint8Array(4);
+      var relative = block.time - clusterTime;
+      head[0] = 0x80 | block.track;
+      head[1] = (relative >> 8) & 0xff;
+      head[2] = relative & 0xff;
+      head[3] = block.key ? 0x80 : 0;
+      return ebml(0xa3, [head, block.data]);
+    }
+
+    /** An EBML element. Sizes always take 8 bytes, which keeps the writer simple. */
+    function ebml(id, content) {
+      var payload = content instanceof Uint8Array ? content : joinBytes(content);
+      var size = new Uint8Array(8);
+      size[0] = 0x01;
+      for (var i = 7, n = payload.length; i > 0; i--, n = Math.floor(n / 256)) size[i] = n % 256;
+      return joinBytes([uintBytes(id), size, payload]);
+    }
+
+    function ebmlUint(id, value) {
+      return ebml(id, uintBytes(value));
+    }
+
+    function ebmlFloat(id, value) {
+      var bytes = new Uint8Array(8);
+      new DataView(bytes.buffer).setFloat64(0, value);
+      return ebml(id, bytes);
+    }
+
+    function ebmlString(id, value) {
+      return ebml(id, new TextEncoder().encode(value));
+    }
+
+    function uintBytes(value) {
+      var bytes = [];
+      do {
+        bytes.unshift(value % 256);
+        value = Math.floor(value / 256);
+      } while (value > 0);
+      return new Uint8Array(bytes);
+    }
+
+    function joinBytes(parts) {
+      var out = new Uint8Array(
+        parts.reduce(function (sum, p) {
+          return sum + p.length;
+        }, 0)
+      );
+      var at = 0;
+      parts.forEach(function (p) {
+        out.set(p, at);
+        at += p.length;
+      });
+      return out;
+    }
+
+    // -----------------------------------------------------------------------
     // Reader: plays chunk by chunk and generates the next ones meanwhile
 
     class Reader {
@@ -919,15 +1254,11 @@
 
       fetchClip(index) {
         if (this.clips[index]) return this.clips[index].promise;
-        var body = { voiceId: this.voiceId, text: this.chunks[index].text };
-        if (this.speed !== 1) body.settings = { speed: this.speed };
         var clip = { url: '', buffer: null };
-        clip.promise = api('/generate-speech', { method: 'POST', body: body, signal: this.controller.signal })
-          .then((r) => r.arrayBuffer())
-          .then((buffer) => {
-            clip.buffer = buffer;
-            clip.url = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }));
-          });
+        clip.promise = generateSpeech(this.chunks[index].text, this.voiceId, this.speed, this.controller.signal).then((buffer) => {
+          clip.buffer = buffer;
+          clip.url = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }));
+        });
         // Errors surface when the chunk's turn comes; don't report them twice.
         clip.promise.catch(function () {});
         this.clips[index] = clip;

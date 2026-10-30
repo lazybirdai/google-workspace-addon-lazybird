@@ -187,7 +187,7 @@ function slidesText_(scope, source) {
     var texts = [];
     if (source !== 'notes') texts.push(slideText_(p.slide));
     if (source !== 'text') texts.push(notesText_(p.slide));
-    return { label: 'Slide ' + (p.index + 1), text: texts.filter(Boolean).join('\n') };
+    return { label: 'Slide ' + (p.index + 1), text: texts.filter(Boolean).join('\n'), slideId: p.slide.getObjectId() };
   });
 }
 
@@ -289,4 +289,134 @@ function hostUi_() {
     default:
       return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Slide voiceovers
+//
+// Each voiceover is a small video clip saved in the user's Drive and placed on
+// its slide, where it starts by itself in the slideshow. Slides only plays
+// videos, so the sidebar wraps the reading in one. With the drive.file
+// scope Lazybird can only open files it created and decks the user picked for
+// it in Google's file picker, so the picker shows once per presentation.
+
+var GCP_PROJECT_NUMBER = '1008306091565';
+var VOICEOVER_PREFIX = 'lazybird_vo_';
+var VOICEOVER_FOLDER = 'Lazybird voiceovers';
+var VOICEOVER_FOLDER_KEY = 'lazybird.voiceoverFolder';
+var VOICEOVER_SIZE = 40; // points
+var PICKER_RESULT_KEY = 'lazybird.picker';
+
+/** Whether Lazybird may edit the open presentation through the Slides API. */
+function hasDeckAccess() {
+  try {
+    Slides.Presentations.get(SlidesApp.getActivePresentation().getId(), { fields: 'presentationId' });
+    return true;
+  } catch (err) {
+    if (/not found|permission/i.test(err.message)) return false;
+    throw err;
+  }
+}
+
+/** Opens Google's file picker, showing only the open presentation. */
+function showDeckPicker() {
+  CacheService.getUserCache().remove(PICKER_RESULT_KEY);
+  var html = HtmlService.createHtmlOutputFromFile('Picker').setWidth(640).setHeight(440);
+  SlidesApp.getUi().showModalDialog(html, 'Select this presentation');
+}
+
+function getPickerConfig() {
+  return { token: ScriptApp.getOAuthToken(), fileId: SlidesApp.getActivePresentation().getId(), appId: GCP_PROJECT_NUMBER };
+}
+
+/** The picker reports "picked" or "cancel" here; the sidebar waits for it. */
+function setPickerResult(result) {
+  CacheService.getUserCache().put(PICKER_RESULT_KEY, result === 'picked' ? 'picked' : 'cancel', 600);
+}
+
+/** "ok" once Lazybird may edit the deck, "cancel" if the picker was closed, else "waiting". */
+function deckAccessStatus() {
+  if (hasDeckAccess()) return 'ok';
+  return CacheService.getUserCache().get(PICKER_RESULT_KEY) === 'cancel' ? 'cancel' : 'waiting';
+}
+
+/**
+ * Saves the clip to Drive and puts it on the slide in place of the slide's
+ * earlier Lazybird voiceover. The old file stays in Drive, since a copy of the
+ * deck may still use it.
+ *
+ * @param {string} slideId a slide of the open presentation
+ * @param {string} data the WebM clip, base64-encoded
+ */
+function addVoiceover(slideId, data) {
+  var presentation = SlidesApp.getActivePresentation();
+  var slides = presentation.getSlides();
+  var index = -1;
+  for (var i = 0; i < slides.length; i++) {
+    if (slides[i].getObjectId() === slideId) index = i;
+  }
+  if (index < 0) throw new Error('That slide is no longer in the presentation.');
+  var slide = slides[index];
+  var name = presentation.getName() + ' – Slide ' + (index + 1) + '.webm';
+  var blob = Utilities.newBlob(Utilities.base64Decode(data), 'video/webm', name);
+  var file;
+  try {
+    file = Drive.Files.create({ name: name, mimeType: 'video/webm', parents: [voiceoverFolder_()] }, blob);
+  } catch (err) {
+    if (/quota/i.test(err.message)) throw new Error('Your Google Drive is full, so the voiceover could not be saved.');
+    throw err;
+  }
+
+  var presentationId = presentation.getId();
+  var page = Slides.Presentations.Pages.get(presentationId, slide.getObjectId(), { fields: 'pageElements(objectId)' });
+  var requests = (page.pageElements || [])
+    .filter(function (el) {
+      return el.objectId.indexOf(VOICEOVER_PREFIX) === 0;
+    })
+    .map(function (el) {
+      return { deleteObject: { objectId: el.objectId } };
+    });
+  var objectId = VOICEOVER_PREFIX + Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+  var margin = 12;
+  requests.push(
+    {
+      createVideo: {
+        objectId: objectId,
+        source: 'DRIVE',
+        id: file.id,
+        elementProperties: {
+          pageObjectId: slide.getObjectId(),
+          size: { width: { magnitude: VOICEOVER_SIZE, unit: 'PT' }, height: { magnitude: VOICEOVER_SIZE, unit: 'PT' } },
+          transform: {
+            scaleX: 1,
+            scaleY: 1,
+            translateX: presentation.getPageWidth() - VOICEOVER_SIZE - margin,
+            translateY: presentation.getPageHeight() - VOICEOVER_SIZE - margin,
+            unit: 'PT',
+          },
+        },
+      },
+    },
+    { updateVideoProperties: { objectId: objectId, videoProperties: { autoPlay: true }, fields: 'autoPlay' } },
+  );
+  try {
+    Slides.Presentations.batchUpdate({ requests: requests }, presentationId);
+  } catch (err) {
+    Drive.Files.update({ trashed: true }, file.id);
+    throw err;
+  }
+}
+
+/** The "Lazybird voiceovers" folder in the user's Drive, created on first use. */
+function voiceoverFolder_() {
+  var props = PropertiesService.getUserProperties();
+  var id = props.getProperty(VOICEOVER_FOLDER_KEY);
+  if (id) {
+    try {
+      if (!Drive.Files.get(id, { fields: 'trashed' }).trashed) return id;
+    } catch (err) {}
+  }
+  id = Drive.Files.create({ name: VOICEOVER_FOLDER, mimeType: 'application/vnd.google-apps.folder' }).id;
+  props.setProperty(VOICEOVER_FOLDER_KEY, id);
+  return id;
 }

@@ -13,9 +13,12 @@ The add-on asks Google for these permissions:
 | View and manage documents that this application has been installed in (`documents.currentonly`) | To read the text of the document you open the add-on in. |
 | View and manage Google Slides presentations that this application has been installed in (`presentations.currentonly`) | To read slide text and speaker notes in the presentation you open the add-on in. |
 | View and manage spreadsheets that this application has been installed in (`spreadsheets.currentonly`) | To read cell values in the spreadsheet you open the add-on in. |
-| Display and run third-party web content in prompts and sidebars inside Google applications (`script.container.ui`) | To show the Lazybird sidebar and help dialog. |
+| See, edit, create and delete only the specific Google Drive files you use with this app (`drive.file`) | For slide voiceovers: to save the voiceover clips in your Drive and add them to the presentation you select in Google's file picker. |
+| Display and run third-party web content in prompts and sidebars inside Google applications (`script.container.ui`) | To show the Lazybird sidebar, the file picker and the help dialog. |
 
-The add-on only reads the file you open it in, and only when you press **Read aloud**. It reads the part you chose: the selection, the text from the cursor on, the whole document, one or more slides, the selected cells or the whole sheet. It never changes your files, and it can't see your other files, your email or your contacts.
+The add-on only reads the file you open it in, and only when you press **Read aloud** or **Add voiceover**. It reads the part you chose: the selection, the text from the cursor on, the whole document, one or more slides, the selected cells or the whole sheet. Reading never changes your files, and the add-on can't see your other files, your email or your contacts.
+
+**Add voiceover** is the only feature that changes anything. It saves one video clip per slide in a **Lazybird voiceovers** folder in your Drive and adds it to that slide, in place of the slide's earlier Lazybird voiceover. With `drive.file`, the add-on can open only the files it created and the presentations you selected for it.
 
 ## What the add-on sends, and to whom
 
@@ -32,6 +35,7 @@ The add-on does not send Google user data anywhere else. It has no analytics, no
 
 - **Your Lazybird API key and your settings** (voice, speed and what to read) are stored in your Google account with Apps Script's user properties. Only you and the add-on can read them. **Disconnect** in the add-on's settings deletes the key.
 - **Audio** stays in your browser's memory while it plays and is discarded when you stop or close the sidebar. It is saved to your computer only when you press **MP3**.
+- **Voiceover clips** are saved in your own Google Drive when you press **Add voiceover**. They stay there until you delete them. Lazybird keeps no copy.
 
 ## How Lazybird handles the data
 

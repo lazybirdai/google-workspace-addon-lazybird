@@ -6,6 +6,21 @@
     "https://www.googleapis.com/auth/documents.currentonly",
     "https://www.googleapis.com/auth/presentations.currentonly",
     "https://www.googleapis.com/auth/spreadsheets.currentonly",
+    "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/script.container.ui"
-  ]
+  ],
+  "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Slides",
+        "serviceId": "slides",
+        "version": "v1"
+      },
+      {
+        "userSymbol": "Drive",
+        "serviceId": "drive",
+        "version": "v3"
+      }
+    ]
+  }
 }

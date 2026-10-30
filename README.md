@@ -6,6 +6,7 @@ Read your documents, slides and spreadsheets aloud with natural AI voices, and s
 
 - **Google Docs.** Read the selection, everything from the cursor on, or the whole document. Lists and tables are read too.
 - **Google Slides.** Read this slide, every slide from here on, or the whole presentation. Choose the slide text, the speaker notes or both. Text on a slide is read top to bottom, left to right, and skipped slides are left out.
+- **Slide voiceovers.** **Add voiceover** puts the reading of each slide on that slide as a small clip that plays by itself when you present. Turn your speaker notes into a narrated deck in one click.
 - **Google Sheets.** Read the selected cells or the whole sheet, row by row.
 - **Starts in seconds.** Playback starts as soon as the first lines are ready, even for long documents, and keeps going while the rest is generated.
 - **Player controls.** Pause, resume, stop and replay. The sidebar shows which slide or row is playing.
@@ -31,7 +32,9 @@ Read your documents, slides and spreadsheets aloud with natural AI voices, and s
 
 ## Permissions and privacy
 
-The add-on uses only the "current file" permissions: it can read the document, presentation or spreadsheet you open it in, and nothing else in your Drive. It reads only the part you choose, only when you select **Read aloud**, and never changes your files.
+The add-on uses the "current file" permissions to read the document, presentation or spreadsheet you open it in. It reads only the part you choose, only when you select **Read aloud** or **Add voiceover**. Reading never changes your files.
+
+For slide voiceovers it also uses the `drive.file` permission, which lets it open only the files it created and the presentations you select for it in Google's file picker. It saves each clip in a **Lazybird voiceovers** folder in your Drive and adds it to its slide, in place of that slide's earlier Lazybird voiceover. It can't see your other files.
 
 The text you choose is sent to the Lazybird API at `api.lazybird.app` to generate the audio. Your API key and settings are stored in your Google account. The add-on has no analytics. See [PRIVACY.md](PRIVACY.md) for the details, and Lazybird's [privacy policy](https://lazybird.app/privacy) and [terms](https://lazybird.app/terms).
 
@@ -41,7 +44,9 @@ The add-on is a standalone [Apps Script](https://developers.google.com/apps-scri
 
 - `Code.js` runs on Apps Script. It adds the menu, reads the text of the open file and keeps the user's settings.
 - `Sidebar.html`, `Styles.html` and `Client.html` make up the sidebar. The sidebar calls the Lazybird API from the browser, so the script itself needs no network permission.
-- `Help.html` is the help dialog.
+- `Help.html` is the help dialog, and `Picker.html` shows Google's file picker so the user can let the add-on edit the open presentation.
+
+Slide voiceovers use the Slides and Drive advanced services. Slides plays only videos on a slide, so the sidebar wraps each reading in a small WebM video (WebCodecs) before the script saves it to Drive and inserts it.
 
 To work on it with [clasp](https://github.com/google/clasp):
 

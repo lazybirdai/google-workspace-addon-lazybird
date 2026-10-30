@@ -119,6 +119,12 @@
         </div>
       </div>
 
+      <button id="voiceover" class="button voiceover" type="button" title="Turn each slide's text into a clip that plays by itself when you present" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-voiceover" /></svg>
+        <span>Add voiceover to slides</span>
+      </button>
+      <p id="voiceover-status" class="status" hidden></p>
+
       <p id="main-error" class="error" hidden></p>
 
       <footer class="foot">
@@ -176,6 +182,7 @@
       <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" /><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" /></symbol>
       <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" /></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+      <symbol id="i-voiceover" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z" fill="currentColor" /><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></symbol>
       <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></symbol>
       <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="2" /><circle cx="8" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="2" /></symbol>
     </svg>
