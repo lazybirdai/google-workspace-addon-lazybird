@@ -6,7 +6,7 @@ Lazybird: AI Voice Text to Speech & Read Aloud
 
 ## Short description
 
-Read Google Docs, Slides and Sheets aloud in natural AI voices, and save the audio as MP3. 500+ voices in 150+ languages and accents. Free plan, no card needed.
+Read Google Docs™, Google Slides™ and Google Sheets™ aloud in natural AI voices, and save the audio as MP3. 500+ voices in 150+ languages and accents. Free plan, no card needed.
 
 ## Detailed description
 
@@ -22,20 +22,20 @@ WHAT YOU CAN DO
 • Hear lists, schedules and notes kept in a spreadsheet, one row at a time.
 • Hear how a text sounds in another language or accent.
 
-GOOGLE DOCS
+GOOGLE DOCS™
 
 • Read the selected text, everything from the cursor to the end, or the whole document.
 • Lists and tables are read too, in reading order.
 
-GOOGLE SLIDES
+GOOGLE SLIDES™
 
 • Read this slide, every slide from this one on, or the whole presentation.
 • Choose the slide text, the speaker notes, or both.
 • Text on a slide is read top to bottom and left to right, and skipped slides are left out.
 • The sidebar shows which slide is playing.
-• Add voiceover: puts the reading of each slide on that slide as a small clip that plays by itself in the slideshow. The clips are saved in a Lazybird voiceovers folder in your Drive.
+• Add voiceover: puts the reading of each slide on that slide as a small clip that plays by itself in the slideshow. The clips are saved in a Lazybird voiceovers folder in your Google Drive™.
 
-GOOGLE SHEETS
+GOOGLE SHEETS™
 
 • Read the selected cells or the whole sheet, row by row.
 • Each row is read on its own, and the sidebar shows which row is playing.
@@ -58,7 +58,7 @@ PLAYER
 GETTING STARTED
 
 1. Install Lazybird.
-2. In Docs, Slides or Sheets, open Extensions > Lazybird > Read aloud.
+2. In Google Docs™, Google Slides™ or Google Sheets™, open Extensions > Lazybird > Read aloud.
 3. Enter your email and type the 6-digit code we send you. If you're new to Lazybird, this creates a free account. If you already have a Lazybird API key, you can paste it instead.
 4. Pick a voice and a speed, choose what to read, and press Read aloud.
 
@@ -80,3 +80,11 @@ MORE FROM LAZYBIRD
 Lazybird Studio at lazybird.app is a full voiceover editor for videos, podcasts, audiobooks and courses: long scripts, dialogues with more than one voice, and voice cloning. The same voices are available in the add-on.
 
 Questions or ideas? Write to support@lazybird.app.
+
+Google Docs™, Google Slides™, Google Sheets™ and Google Drive™ are trademarks of Google LLC.
+
+## Support links
+
+Terms of Service URL: https://lazybird.app/terms
+Privacy Policy URL: https://lazybird.app/privacy
+Support, Help and Report Issue URLs: https://www.lazybird.app/contact-us (Google rejects GitHub as a support link)
